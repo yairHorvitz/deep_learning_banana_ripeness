@@ -2,7 +2,7 @@ import os
 from sklearn.metrics import accuracy_score, precision_score, recall_score
 
 
-def count_images_in_directory(directory)->int:
+def count_images_in_directory(directory) -> int:
     total_images = 0
     for root, dirs, files in os.walk(directory):
         # סינון קבצים על פי סיומות של תמונות
@@ -24,7 +24,7 @@ def get_ground_truth_labels(test_dir) -> list:
     return labels
 
 
-def calculate_accuracy(ground_truth_labels, test_labels)->float:
+def calculate_accuracy(ground_truth_labels, test_labels) -> float:
     correct_predictions = 0
     total_predictions = len(ground_truth_labels)
 
@@ -90,7 +90,7 @@ def calculate_accuracy(ground_truth_labels, test_labels)->float:
 #     else:
 #         return recall_per_class
 
-def calculate_class_counts(train_dir)->dict:
+def calculate_class_counts(train_dir) -> dict:
     # ספירת מספר התמונות בכל מחלקה
     class_counts = {}
     for class_name in os.listdir(train_dir):
@@ -101,13 +101,13 @@ def calculate_class_counts(train_dir)->dict:
     return class_counts
 
 
-def Calculate_metrics(ground_truth_labels, test_labels)->None:
+def Calculate_metrics(ground_truth_labels, test_labels) -> None:
     accuracy = accuracy_score(ground_truth_labels, test_labels)
     precision = precision_score(ground_truth_labels, test_labels, average='weighted', zero_division=0)
     recall = recall_score(ground_truth_labels, test_labels, average='weighted')
-    print(f"Baseline Accuracy: {accuracy}")
-    print(f"Baseline Precision: {precision}")
-    print(f"Baseline Recall: {recall}")
+    print(f"Test Accuracy: {accuracy:.2f}%")
+    print(f"Precision: {precision:.2f}")
+    print(f"Recall: {recall:.2f}")
 
 
 def main():

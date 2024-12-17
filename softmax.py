@@ -3,6 +3,8 @@ from torch import nn
 from torch.utils.data import DataLoader
 from torchvision import datasets, transforms
 import torch.optim as optim
+from sklearn.metrics import precision_score, recall_score, accuracy_score
+
 
 # Define the Softmax classification model
 class SoftmaxClassifier(nn.Module):
@@ -12,7 +14,7 @@ class SoftmaxClassifier(nn.Module):
 
     def forward(self, x):
         x = x.view(x.size(0), -1)  # Flatten the images to (batch_size, input_dim)
-        logits = self.linear(x)    # Linear transformation
+        logits = self.linear(x)  # Linear transformation
         return logits  # No need to apply softmax (CrossEntropyLoss handles it)
 
 
@@ -70,18 +72,65 @@ def train(model, train_loader, val_loader, optimizer, criterion, epochs=10, devi
         print(f"Validation Accuracy: {100 * correct / total:.2f}%")
 
 
+# def test(model, test_loader, device="cpu"):
+#     model.eval()
+#     correct, total = 0, 0
+#     with torch.no_grad():
+#         for images, labels in test_loader:
+#             images, labels = images.to(device), labels.to(device)
+#             outputs = model(images)
+#             _, predicted = torch.max(outputs, 1)
+#             total += labels.size(0)
+#             correct += (predicted == labels).sum().item()
+#
+#     print(f"Test Accuracy: {100 * correct / total:.2f}%")
+# מילון מיפוי בין אינדקסים לשמות הקטגוריות
+label_to_name = {
+    0: "A_raw",
+    1: "B_almost_ripe",
+    2: "C_ripe",
+    3: "D_banana_honey"
+}
+
+
 def test(model, test_loader, device="cpu"):
     model.eval()
     correct, total = 0, 0
+    all_predicted, all_labels = [], []
+
     with torch.no_grad():
         for images, labels in test_loader:
             images, labels = images.to(device), labels.to(device)
             outputs = model(images)
             _, predicted = torch.max(outputs, 1)
+
+            # שמירה של הערכים
+            all_predicted.extend(predicted.cpu().numpy())
+            all_labels.extend(labels.cpu().numpy())
+
             total += labels.size(0)
             correct += (predicted == labels).sum().item()
 
-    print(f"Test Accuracy: {100 * correct / total:.2f}%")
+    # חישוב דיוק כללי בעזרת accuracy_score
+    accuracy = accuracy_score(all_labels, all_predicted)
+    print(f"Test Accuracy: {accuracy:.2f}%")
+
+    # חישוב Precision ו-Recall
+    precision = precision_score(all_labels, all_predicted, average='weighted', zero_division=1)
+    recall = recall_score(all_labels, all_predicted, average='weighted', zero_division=1)
+
+    print(f"Precision: {precision:.2f}")
+    print(f"Recall: {recall:.2f}")
+
+    # הדפסת התחזיות לעומת התגיות לפי שמות
+    print("\nPrediction Results:")
+    for i in range(len(all_labels)):
+        pred_name = label_to_name[all_predicted[i]]
+        actual_name = label_to_name[all_labels[i]]
+        status = "Correct" if pred_name == actual_name else "Wrong"
+        print(f"Sample {i + 1}: Predicted = {pred_name}, Actual = {actual_name} -> {status}")
+
+
 
 
 def main():
