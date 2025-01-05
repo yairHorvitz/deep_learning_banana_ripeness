@@ -1,6 +1,5 @@
 import os
-import torch
-from sklearn.metrics import accuracy_score, precision_score, recall_score
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
 
 
 def count_images_in_directory(directory) -> int:
@@ -25,72 +24,6 @@ def get_ground_truth_labels(test_dir) -> list:
     return labels
 
 
-def calculate_accuracy(ground_truth_labels, test_labels) -> float:
-    correct_predictions = 0
-    total_predictions = len(ground_truth_labels)
-
-    for true, predicted in zip(ground_truth_labels, test_labels):
-        if true == predicted:
-            correct_predictions += 1
-
-    accuracy = correct_predictions / total_predictions
-    return accuracy
-
-
-# def calculate_recall(ground_truth_labels, test_labels, average='weighted'):
-#     # יצירת מילונים לספירת true positives, false positives ו-false negatives
-#     class_counts = {}
-#     true_positives = {}
-#     false_positives = {}
-#     false_negatives = {}
-#
-#     # סופר את המופעים של כל מחלקה
-#     for true in ground_truth_labels:
-#         if true not in class_counts:
-#             class_counts[true] = 0
-#         class_counts[true] += 1
-#
-#     print("Class counts:", class_counts)  # דיבאג: הצגת ספירת מחלקות
-#
-#     for true, predicted in zip(ground_truth_labels, test_labels):
-#         # עדכון מניות ההתחזיות לכל מחלקה
-#         if true == predicted:
-#             if true not in true_positives:
-#                 true_positives[true] = 0
-#             true_positives[true] += 1
-#         else:
-#             if true not in false_negatives:
-#                 false_negatives[true] = 0
-#             false_negatives[true] += 1
-#
-#             if predicted not in false_positives:
-#                 false_positives[predicted] = 0
-#             false_positives[predicted] += 1
-#
-#     # הצגת הערכים של true positives, false positives ו-false negatives עבור דיבאג
-#     print("True Positives:", true_positives)  # דיבאג: הצגת true positives
-#     print("False Positives:", false_positives)  # דיבאג: הצגת false positives
-#     print("False Negatives:", false_negatives)  # דיבאג: הצגת false negatives
-#
-#     # חישוב Recall לכל מחלקה
-#     recall_per_class = {}
-#     for class_name in true_positives:
-#         tp = true_positives[class_name]
-#         fn = false_negatives.get(class_name, 0)
-#         recall_per_class[class_name] = tp / (tp + fn) if (tp + fn) != 0 else 0
-#
-#     print("Recall per class:", recall_per_class)  # דיבאג: הצגת recall per class
-#
-#     # חישוב Recall ממוצע לפי weighted
-#     if average == 'weighted':
-#         total_samples = len(ground_truth_labels)
-#         weighted_recall = sum(recall_per_class[class_name] * class_counts.get(class_name, 0)
-#                               for class_name in recall_per_class) / total_samples
-#         print(f"Weighted Recall: {weighted_recall}")  # דיבאג: הצגת weighted recall
-#         return weighted_recall
-#     else:
-#         return recall_per_class
-
 def calculate_class_counts(train_dir) -> dict:
     # ספירת מספר התמונות בכל מחלקה
     class_counts = {}
@@ -98,17 +31,32 @@ def calculate_class_counts(train_dir) -> dict:
         class_path = os.path.join(train_dir, class_name)
         if os.path.isdir(class_path):  # בדיקה אם זו תקייה
             class_counts[class_name] = count_images_in_directory(class_path)
-            print(f"class_path:[{class_name}] {class_counts[class_name]}")
     return class_counts
 
 
-def Calculate_metrics(ground_truth_labels, test_labels) -> None:
-    accuracy = accuracy_score(ground_truth_labels, test_labels)
-    precision = precision_score(ground_truth_labels, test_labels, average='weighted', zero_division=0)
-    recall = recall_score(ground_truth_labels, test_labels, average='weighted')
-    print(f"Test Accuracy: {accuracy:.2f}%")
-    print(f"Precision: {precision:.2f}")
-    print(f"Recall: {recall:.2f}")
+label_to_name = {
+    0: "A_raw",
+    1: "B_almost_ripe",
+    2: "C_ripe",
+    3: "D_banana_honey"
+}
+
+
+def Calculate_metrics(truth_labels, test_labels) -> None:
+    print("-----------------------------metrics-----------------------------")
+    accuracy = accuracy_score(truth_labels, test_labels)
+    print(f"\nTest Accuracy: {accuracy*100:.3f}%")
+
+    precisions = precision_score(truth_labels, test_labels, average=None, zero_division=1)
+    for target_class, precision in enumerate(precisions):
+        print(f"Precision for {label_to_name[target_class]}: {precision*100:.3f}%")
+
+    recall = recall_score(truth_labels, test_labels, average=None, zero_division=1)
+    for target_class, recall_value in enumerate(recall):
+        print(f"Recall for {label_to_name[target_class]}: {recall_value*100:.3f}%")
+
+    f1_weighted = f1_score(truth_labels, test_labels, average='weighted', zero_division=1)
+    print(f"Weighted F1 Score: {f1_weighted*100:.3f}%")
 
 
 def main():
@@ -128,14 +76,11 @@ def main():
     test_labels = [majority_class] * test_images  # predicting the majority class for all test images
 
     print("test labels", test_labels)
-    print("size test labels", len(test_labels))
-
-    ground_truth_labels = get_ground_truth_labels(test_dir)
+    # don't matter the order of the labels because we are always predicting the same class
+    truth_labels = get_ground_truth_labels(test_dir)
     print("Ground truth labels:")
-    print(ground_truth_labels)
-    print(len(ground_truth_labels))
-
-    Calculate_metrics(ground_truth_labels, test_labels)
+    print(truth_labels)
+    Calculate_metrics(truth_labels, test_labels)
 
 
 if __name__ == '__main__':

@@ -3,7 +3,8 @@ from torch import nn
 from torch.utils.data import DataLoader
 from torchvision import datasets, transforms
 import torch.optim as optim
-from sklearn.metrics import precision_score, recall_score, accuracy_score
+from sklearn.metrics import precision_score, recall_score, accuracy_score, f1_score
+
 
 # Define the Convolutional Neural Network model
 class ConvolutionalNN(nn.Module):
@@ -14,22 +15,31 @@ class ConvolutionalNN(nn.Module):
         self.pool = nn.MaxPool2d(kernel_size=2, stride=2)
         # Convolutional layer 2
         self.conv2 = nn.Conv2d(32, 64, kernel_size=3, stride=1, padding=1)
+        # Convolutional layer 3 (new layer)
+        self.conv3 = nn.Conv2d(64, 128, kernel_size=3, stride=1, padding=1)
+
         # Fully connected layers
-        self.fc1 = nn.Linear(64 * 56 * 56, 512)  # Adjust dimensions based on input size
-        self.fc2 = nn.Linear(512, num_classes)
+        self.fc1 = nn.Linear(128 * 28 * 28, 512)  # Adjust dimensions based on input size after conv layers
+        self.fc2 = nn.Linear(512, 256)  # New fully connected layer
+        self.fc3 = nn.Linear(256, num_classes)  # Output layer
 
     def forward(self, x):
         # Apply first convolutional layer + pooling + ReLU activation
         x = self.pool(torch.relu(self.conv1(x)))
         # Apply second convolutional layer + pooling + ReLU activation
         x = self.pool(torch.relu(self.conv2(x)))
+        # Apply third convolutional layer + pooling + ReLU activation
+        x = self.pool(torch.relu(self.conv3(x)))
         # Flatten the tensor
         x = x.view(x.size(0), -1)
         # Fully connected layer 1 + ReLU activation
         x = torch.relu(self.fc1(x))
-        # Fully connected layer 2 (output layer)
-        x = self.fc2(x)
+        # Fully connected layer 2 + ReLU activation
+        x = torch.relu(self.fc2(x))
+        # Fully connected layer 3 (output layer)
+        x = self.fc3(x)
         return x  # No need to apply softmax, CrossEntropyLoss handles it
+
 
 # Load the data
 def load_data(batch_size=32):
@@ -49,6 +59,7 @@ def load_data(batch_size=32):
     test_loader = DataLoader(test_data, batch_size=batch_size, shuffle=False)
 
     return train_loader, val_loader, test_loader, len(train_data.classes)
+
 
 # Train the model
 def train(model, train_loader, val_loader, optimizer, criterion, epochs=10, device="cpu"):
@@ -78,6 +89,7 @@ def train(model, train_loader, val_loader, optimizer, criterion, epochs=10, devi
 
         print(f"Validation Accuracy: {100 * correct / total:.2f}%")
 
+
 # Test the model
 label_to_name = {
     0: "A_raw",
@@ -85,6 +97,7 @@ label_to_name = {
     2: "C_ripe",
     3: "D_banana_honey"
 }
+
 
 def test(model, test_loader, device="cpu"):
     model.eval()
@@ -114,6 +127,10 @@ def test(model, test_loader, device="cpu"):
     for target_class, recall_value in enumerate(recall):
         print(f"Recall for {label_to_name[target_class]}: {recall_value:.4f}")
 
+    f1_weighted = f1_score(all_labels, all_predicted, average='weighted', zero_division=1)
+    print(f"Weighted F1 Score: {f1_weighted:.4f}")
+
+
 # Main function
 def main():
     batch_size = 32
@@ -129,6 +146,7 @@ def main():
 
     train(model, train_loader, val_loader, optimizer, criterion, epochs, device)
     test(model, test_loader, device)
+
 
 if __name__ == "__main__":
     main()

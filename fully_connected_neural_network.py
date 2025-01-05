@@ -3,7 +3,8 @@ from torch import nn
 from torch.utils.data import DataLoader
 from torchvision import datasets, transforms
 import torch.optim as optim
-from sklearn.metrics import precision_score, recall_score, accuracy_score
+from sklearn.metrics import precision_score, recall_score, accuracy_score, f1_score
+
 
 # Define the Fully Connected Neural Network model
 class FullyConnectedNN(nn.Module):
@@ -46,28 +47,38 @@ def load_data(batch_size=32):
 
     return train_loader, val_loader, test_loader, len(train_data.classes)
 
+def count_images_per_category(data_loader):
+    # מילון לשמירת מספר התמונות לכל קטגוריה
+    label_counts = {i: 0 for i in range(len(data_loader.dataset.classes))}
 
-def train(model, train_loader, val_loader, optimizer, criterion, epochs=10, device="cpu"):
-    label_counts = {i: 0 for i in range(4)}
-
-    for images, labels in train_loader:
+    # חישוב מספר התמונות לכל קטגוריה
+    for images, labels in data_loader:
         for label in labels.cpu().numpy():
             label_counts[label] += 1
 
+    return label_counts
+
+
+# Training loop
+def train(model, train_loader, val_loader, optimizer, criterion, epochs=10, device=torch.device("cpu")):
+    # מילון לשמירת מספר התמונות לכל קטגוריה בסט האימון
+    label_counts = count_images_per_category(train_loader)
+    # לולאת האימון
     for epoch in range(epochs):
         model.train()
         total_loss = 0
         for images, labels in train_loader:
             images, labels = images.to(device), labels.to(device)
-            optimizer.zero_grad()
-            outputs = model(images)
-            loss = criterion(outputs, labels)
-            loss.backward()
-            optimizer.step()
+            optimizer.zero_grad()  # Zero gradients
+            outputs = model(images)  # Forward pass
+            loss = criterion(outputs, labels)  # Compute loss
+            loss.backward()  # Backpropagation
+            optimizer.step()  # Update weights
             total_loss += loss.item()
 
         print(f"Epoch [{epoch + 1}/{epochs}], Loss: {total_loss / len(train_loader):.4f}")
 
+        # Validate the model
         model.eval()
         correct, total = 0, 0
         with torch.no_grad():
@@ -80,6 +91,11 @@ def train(model, train_loader, val_loader, optimizer, criterion, epochs=10, devi
 
         print(f"Validation Accuracy: {100 * correct / total:.2f}%")
 
+    # הדפסת מספר התמונות לכל קטגוריה בסוף האימון
+    print("\nNumber of images for each category in the training set:")
+    for target_class, count in label_counts.items():
+        print(f"{label_to_name[target_class]}: {count} images")
+
 
 label_to_name = {
     0: "A_raw",
@@ -89,12 +105,11 @@ label_to_name = {
 }
 
 
-def test(model, test_loader, device="cpu"):
+
+def test(model, test_loader, device=torch.device("cpu"), print_predict=False):
     model.eval()
     correct, total = 0, 0
     all_predicted, all_labels = [], []
-
-    label_counts = {i: 0 for i in range(4)}
 
     with torch.no_grad():
         for images, labels in test_loader:
@@ -102,32 +117,39 @@ def test(model, test_loader, device="cpu"):
             outputs = model(images)
             _, predicted = torch.max(outputs, 1)
 
+            # שמירה של הערכים
             all_predicted.extend(predicted.cpu().numpy())
             all_labels.extend(labels.cpu().numpy())
-
-            for label in labels.cpu().numpy():
-                label_counts[label] += 1
 
             total += labels.size(0)
             correct += (predicted == labels).sum().item()
 
-    accuracy = accuracy_score(all_labels, all_predicted)
-    print(f"\nTest Accuracy: {accuracy:.2f}%")
+    Calculate_metrics(all_labels, all_predicted)
+    if print_predict:
+        # הדפסת התחזיות לעומת התגיות לפי שמות
+        print("\nPrediction Results:")
+        for i in range(len(all_labels)):
+            pred_name = label_to_name[all_predicted[i]]
+            actual_name = label_to_name[all_labels[i]]
+            status = "Correct" if pred_name == actual_name else "Wrong"
+            print(f"Sample {i + 1}: Predicted = {pred_name}, Actual = {actual_name} -> {status}")
 
-    precisions = precision_score(all_labels, all_predicted, average=None, zero_division=1)
+def Calculate_metrics(truth_labels, test_labels) -> None:
+    print("-----------------------------metrics-----------------------------")
+    accuracy = accuracy_score(truth_labels, test_labels)
+    print(f"\nTest Accuracy: {accuracy * 100:.3f}%")
+
+    precisions = precision_score(truth_labels, test_labels, average=None, zero_division=1)
     for target_class, precision in enumerate(precisions):
-        print(f"Precision for {label_to_name[target_class]}: {precision:.4f}")
+        print(f"Precision for {label_to_name[target_class]}: {precision * 100:.3f}%")
 
-    recall = recall_score(all_labels, all_predicted, average=None, zero_division=1)
+    recall = recall_score(truth_labels, test_labels, average=None, zero_division=1)
     for target_class, recall_value in enumerate(recall):
-        print(f"Recall for {label_to_name[target_class]}: {recall_value:.4f}")
+        print(f"Recall for {label_to_name[target_class]}: {recall_value * 100:.3f}%")
 
-    print("\nPrediction Results:")
-    for i in range(len(all_labels)):
-        pred_name = label_to_name[all_predicted[i]]
-        actual_name = label_to_name[all_labels[i]]
-        status = "Correct" if pred_name == actual_name else "Wrong"
-        print(f"Sample {i + 1}: Predicted = {pred_name}, Actual = {actual_name} -> {status}")
+    f1_weighted = f1_score(truth_labels, test_labels, average='weighted', zero_division=1)
+    print(f"Weighted F1 Score: {f1_weighted * 100:.3f}%")
+
 
 
 def main():
