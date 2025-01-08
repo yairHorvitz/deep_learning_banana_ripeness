@@ -1,4 +1,5 @@
 import torch
+from matplotlib import pyplot as plt
 from torch import nn
 from torch.utils.data import DataLoader
 from torchvision import datasets, transforms
@@ -23,6 +24,10 @@ class ConvolutionalNN(nn.Module):
         self.fc2 = nn.Linear(512, 256)  # New fully connected layer
         self.fc3 = nn.Linear(256, num_classes)  # Output layer
 
+        # Dropout layers
+        self.dropout1 = nn.Dropout(p=1)  # 50% dropout after fc1
+        self.dropout2 = nn.Dropout(p=1)  # 50% dropout after fc2
+
     def forward(self, x):
         # Apply first convolutional layer + pooling + ReLU activation
         x = self.pool(torch.relu(self.conv1(x)))
@@ -32,28 +37,34 @@ class ConvolutionalNN(nn.Module):
         x = self.pool(torch.relu(self.conv3(x)))
         # Flatten the tensor
         x = x.view(x.size(0), -1)
-        # Fully connected layer 1 + ReLU activation
+        # Fully connected layer 1 + ReLU activation + dropout
         x = torch.relu(self.fc1(x))
-        # Fully connected layer 2 + ReLU activation
+        x = self.dropout1(x)
+        # Fully connected layer 2 + ReLU activation + dropout
         x = torch.relu(self.fc2(x))
+        x = self.dropout2(x)
         # Fully connected layer 3 (output layer)
         x = self.fc3(x)
         return x  # No need to apply softmax, CrossEntropyLoss handles it
 
 
-# Load the data
 def load_data(batch_size=32):
+    # Path to your dataset
     data_dir = "data/Banana Images-Real Dataset"
+
+    # Define image transformations
     transform = transforms.Compose([
         transforms.Resize((224, 224)),  # Resize images to 224x224
         transforms.ToTensor(),  # Convert images to PyTorch tensors
         transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])  # Normalize to [-1, 1]
     ])
 
+    # Load train, validation, and test datasets
     train_data = datasets.ImageFolder(root=f"{data_dir}/train", transform=transform)
     val_data = datasets.ImageFolder(root=f"{data_dir}/validation", transform=transform)
     test_data = datasets.ImageFolder(root=f"{data_dir}/test", transform=transform)
 
+    # Create DataLoaders
     train_loader = DataLoader(train_data, batch_size=batch_size, shuffle=True)
     val_loader = DataLoader(val_data, batch_size=batch_size, shuffle=False)
     test_loader = DataLoader(test_data, batch_size=batch_size, shuffle=False)
@@ -61,36 +72,112 @@ def load_data(batch_size=32):
     return train_loader, val_loader, test_loader, len(train_data.classes)
 
 
-# Train the model
-def train(model, train_loader, val_loader, optimizer, criterion, epochs=10, device="cpu"):
+def count_images_per_category(data_loader):
+    # Dictionary to hold count of images per category
+    label_counts = {i: 0 for i in range(len(data_loader.dataset.classes))}
+
+    # Count images for each category
+    for images, labels in data_loader:
+        for label in labels.cpu().numpy():
+            label_counts[label] += 1
+
+    return label_counts
+
+
+def train(model, train_loader, val_loader, optimizer, criterion, epochs=10, device=torch.device("cpu")):
+    # Dictionary to store image counts per category for training data
+    label_counts = count_images_per_category(train_loader)
+
+    # Lists to store data for graphing
+    train_losses, val_losses = [], []
+    train_accuracies, val_accuracies = [], []
+
+    # Training loop
     for epoch in range(epochs):
         model.train()
         total_loss = 0
+        correct_train, total_train = 0, 0
         for images, labels in train_loader:
             images, labels = images.to(device), labels.to(device)
-            optimizer.zero_grad()
-            outputs = model(images)
-            loss = criterion(outputs, labels)
-            loss.backward()
-            optimizer.step()
+            optimizer.zero_grad()  # Zero gradients
+            outputs = model(images)  # Forward pass
+            loss = criterion(outputs, labels)  # Compute loss
+            loss.backward()  # Backpropagation
+            optimizer.step()  # Update weights
             total_loss += loss.item()
+
+            # Calculate accuracy for training set
+            _, predicted = torch.max(outputs, 1)
+            total_train += labels.size(0)
+            correct_train += (predicted == labels).sum().item()
+
+        # Calculate training loss and accuracy
+        train_losses.append(total_loss / len(train_loader))
+        train_accuracies.append(100 * correct_train / total_train)
 
         print(f"Epoch [{epoch + 1}/{epochs}], Loss: {total_loss / len(train_loader):.4f}")
 
+        # Validate the model
         model.eval()
         correct, total = 0, 0
+        val_loss = 0
         with torch.no_grad():
             for images, labels in val_loader:
                 images, labels = images.to(device), labels.to(device)
                 outputs = model(images)
+                loss = criterion(outputs, labels)  # Compute validation loss
+                val_loss += loss.item()
+
+                # Calculate accuracy for validation set
                 _, predicted = torch.max(outputs, 1)
                 total += labels.size(0)
                 correct += (predicted == labels).sum().item()
 
+        val_losses.append(val_loss / len(val_loader))
+        val_accuracies.append(100 * correct / total)
+
         print(f"Validation Accuracy: {100 * correct / total:.2f}%")
 
+    # Print the number of images for each category at the end of training
+    print("\nNumber of images for each category in the training set:")
+    for target_class, count in label_counts.items():
+        print(f"{label_to_name[target_class]}: {count} images")
 
-# Test the model
+    # Plot training/validation loss and accuracy
+    plot_metrics(train_losses, val_losses, train_accuracies, val_accuracies)
+
+
+def plot_metrics(train_losses, val_losses, train_accuracies, val_accuracies, test_accuracy=None):
+    epochs = range(1, len(train_losses) + 1)
+
+    plt.figure(figsize=(12, 6))
+
+    # Loss Plot
+    plt.subplot(1, 2, 1)
+    plt.plot(epochs, train_losses, label="Train Loss", color='blue')
+    plt.plot(epochs, val_losses, label="Validation Loss", color='red')
+    plt.xlabel('Epochs')
+    plt.ylabel('Loss')
+    plt.title('Loss during Training and Validation')
+    plt.legend()
+
+    # Accuracy Plot
+    plt.subplot(1, 2, 2)
+    plt.plot(epochs, train_accuracies, label="Train Accuracy", color='blue')
+    plt.plot(epochs, val_accuracies, label="Validation Accuracy", color='red')
+
+    if test_accuracy is not None:
+        plt.axhline(test_accuracy, color='green', linestyle='--', label="Test Accuracy")
+
+    plt.xlabel('Epochs')
+    plt.ylabel('Accuracy (%)')
+    plt.title('Accuracy during Training and Validation')
+    plt.legend()
+
+    plt.tight_layout()
+    plt.show()
+
+
 label_to_name = {
     0: "A_raw",
     1: "B_almost_ripe",
@@ -99,7 +186,7 @@ label_to_name = {
 }
 
 
-def test(model, test_loader, device="cpu"):
+def test(model, test_loader, device=torch.device("cpu"), print_predict=False):
     model.eval()
     correct, total = 0, 0
     all_predicted, all_labels = [], []
@@ -110,25 +197,44 @@ def test(model, test_loader, device="cpu"):
             outputs = model(images)
             _, predicted = torch.max(outputs, 1)
 
+            # Store predictions and labels
             all_predicted.extend(predicted.cpu().numpy())
             all_labels.extend(labels.cpu().numpy())
 
             total += labels.size(0)
             correct += (predicted == labels).sum().item()
 
-    accuracy = accuracy_score(all_labels, all_predicted)
-    print(f"\nTest Accuracy: {accuracy:.2f}%")
+    calculate_metrics(all_labels, all_predicted)
+    test_accuracy = 100 * correct / total
 
-    precisions = precision_score(all_labels, all_predicted, average=None, zero_division=1)
+    print(f"\nTest Accuracy: {test_accuracy:.2f}%")
+
+    if print_predict:
+        print("\nPrediction Results:")
+        for i in range(len(all_labels)):
+            pred_name = label_to_name[all_predicted[i]]
+            actual_name = label_to_name[all_labels[i]]
+            status = "Correct" if pred_name == actual_name else "Wrong"
+            print(f"Sample {i + 1}: Predicted = {pred_name}, Actual = {actual_name} -> {status}")
+
+    return test_accuracy
+
+
+def calculate_metrics(truth_labels, test_labels):
+    print("-----------------------------metrics-----------------------------")
+    accuracy = accuracy_score(truth_labels, test_labels)
+    print(f"\nTest Accuracy: {accuracy * 100:.3f}%")
+
+    precisions = precision_score(truth_labels, test_labels, average=None, zero_division=1)
     for target_class, precision in enumerate(precisions):
-        print(f"Precision for {label_to_name[target_class]}: {precision:.4f}")
+        print(f"Precision for {label_to_name[target_class]}: {precision * 100:.3f}%")
 
-    recall = recall_score(all_labels, all_predicted, average=None, zero_division=1)
+    recall = recall_score(truth_labels, test_labels, average=None, zero_division=1)
     for target_class, recall_value in enumerate(recall):
-        print(f"Recall for {label_to_name[target_class]}: {recall_value:.4f}")
+        print(f"Recall for {label_to_name[target_class]}: {recall_value * 100:.3f}%")
 
-    f1_weighted = f1_score(all_labels, all_predicted, average='weighted', zero_division=1)
-    print(f"Weighted F1 Score: {f1_weighted:.4f}")
+    f1_weighted = f1_score(truth_labels, test_labels, average='weighted', zero_division=1)
+    print(f"Weighted F1 Score: {f1_weighted * 100:.3f}%")
 
 
 # Main function

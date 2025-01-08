@@ -1,4 +1,5 @@
 import torch
+from matplotlib import pyplot as plt
 from torch import nn
 from torch.utils.data import DataLoader
 from torchvision import datasets, transforms
@@ -47,6 +48,7 @@ def load_data(batch_size=32):
 
     return train_loader, val_loader, test_loader, len(train_data.classes)
 
+
 def count_images_per_category(data_loader):
     # מילון לשמירת מספר התמונות לכל קטגוריה
     label_counts = {i: 0 for i in range(len(data_loader.dataset.classes))}
@@ -60,13 +62,19 @@ def count_images_per_category(data_loader):
 
 
 # Training loop
-def train(model, train_loader, val_loader, optimizer, criterion, epochs=10, device=torch.device("cpu")):
-    # מילון לשמירת מספר התמונות לכל קטגוריה בסט האימון
+def train(model, train_loader, val_loader, optimizer, criterion, epochs=20, device=torch.device("cpu")):
+    # Dictionary to store image counts per category for training data
     label_counts = count_images_per_category(train_loader)
-    # לולאת האימון
+
+    # Lists to store data for graphing
+    train_losses, val_losses = [], []
+    train_accuracies, val_accuracies = [], []
+
+    # Training loop
     for epoch in range(epochs):
         model.train()
         total_loss = 0
+        correct_train, total_train = 0, 0
         for images, labels in train_loader:
             images, labels = images.to(device), labels.to(device)
             optimizer.zero_grad()  # Zero gradients
@@ -76,25 +84,45 @@ def train(model, train_loader, val_loader, optimizer, criterion, epochs=10, devi
             optimizer.step()  # Update weights
             total_loss += loss.item()
 
+            # Calculate accuracy for training set
+            _, predicted = torch.max(outputs, 1)
+            total_train += labels.size(0)
+            correct_train += (predicted == labels).sum().item()
+
+        # Calculate training loss and accuracy
+        train_losses.append(total_loss / len(train_loader))
+        train_accuracies.append(100 * correct_train / total_train)
+
         print(f"Epoch [{epoch + 1}/{epochs}], Loss: {total_loss / len(train_loader):.4f}")
 
         # Validate the model
         model.eval()
         correct, total = 0, 0
+        val_loss = 0
         with torch.no_grad():
             for images, labels in val_loader:
                 images, labels = images.to(device), labels.to(device)
                 outputs = model(images)
+                loss = criterion(outputs, labels)  # Compute validation loss
+                val_loss += loss.item()
+
+                # Calculate accuracy for validation set
                 _, predicted = torch.max(outputs, 1)
                 total += labels.size(0)
                 correct += (predicted == labels).sum().item()
 
+        val_losses.append(val_loss / len(val_loader))
+        val_accuracies.append(100 * correct / total)
+
         print(f"Validation Accuracy: {100 * correct / total:.2f}%")
 
-    # הדפסת מספר התמונות לכל קטגוריה בסוף האימון
+    # Print the number of images for each category at the end of training
     print("\nNumber of images for each category in the training set:")
     for target_class, count in label_counts.items():
         print(f"{label_to_name[target_class]}: {count} images")
+
+    # Plot training/validation loss and accuracy
+    plot_metrics(train_losses, val_losses, train_accuracies, val_accuracies)
 
 
 label_to_name = {
@@ -103,7 +131,6 @@ label_to_name = {
     2: "C_ripe",
     3: "D_banana_honey"
 }
-
 
 
 def test(model, test_loader, device=torch.device("cpu"), print_predict=False):
@@ -134,6 +161,7 @@ def test(model, test_loader, device=torch.device("cpu"), print_predict=False):
             status = "Correct" if pred_name == actual_name else "Wrong"
             print(f"Sample {i + 1}: Predicted = {pred_name}, Actual = {actual_name} -> {status}")
 
+
 def Calculate_metrics(truth_labels, test_labels) -> None:
     print("-----------------------------metrics-----------------------------")
     accuracy = accuracy_score(truth_labels, test_labels)
@@ -151,11 +179,41 @@ def Calculate_metrics(truth_labels, test_labels) -> None:
     print(f"Weighted F1 Score: {f1_weighted * 100:.3f}%")
 
 
+def plot_metrics(train_losses, val_losses, train_accuracies, val_accuracies, test_accuracy=None):
+    epochs = range(1, len(train_losses) + 1)
+
+    plt.figure(figsize=(12, 6))
+
+    # Loss Plot
+    plt.subplot(1, 2, 1)
+    plt.plot(epochs, train_losses, label="Train Loss", color='blue')
+    plt.plot(epochs, val_losses, label="Validation Loss", color='red')
+    plt.xlabel('Epochs')
+    plt.ylabel('Loss')
+    plt.title('Loss during Training and Validation')
+    plt.legend()
+
+    # Accuracy Plot
+    plt.subplot(1, 2, 2)
+    plt.plot(epochs, train_accuracies, label="Train Accuracy", color='blue')
+    plt.plot(epochs, val_accuracies, label="Validation Accuracy", color='red')
+
+    if test_accuracy is not None:
+        plt.axhline(test_accuracy, color='green', linestyle='--', label="Test Accuracy")
+
+    plt.xlabel('Epochs')
+    plt.ylabel('Accuracy (%)')
+    plt.title('Accuracy during Training and Validation')
+    plt.legend()
+
+    plt.tight_layout()
+    plt.show()
+
 
 def main():
     input_dim = 224 * 224 * 3
     batch_size = 32
-    epochs = 10
+    epochs = 20
     hidden_dim = 512  # You can adjust the hidden layer dimension
 
     train_loader, val_loader, test_loader, num_classes = load_data(batch_size=batch_size)
