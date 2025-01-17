@@ -1,257 +1,199 @@
+from torch.utils.data import WeightedRandomSampler
+from sklearn.utils.class_weight import compute_class_weight
+import numpy as np
 import torch
-from matplotlib import pyplot as plt
 from torch import nn
 from torch.utils.data import DataLoader
-from torchvision import datasets, transforms
+from torchvision import datasets, transforms, models
 import torch.optim as optim
 from sklearn.metrics import precision_score, recall_score, accuracy_score, f1_score
+from matplotlib import pyplot as plt
+
+from CNN_for_app import test
+from fully_connected_neural_network import plot_metrics
 
 
-# Define the Convolutional Neural Network model
-class ConvolutionalNN(nn.Module):
-    def __init__(self, num_classes):
-        super(ConvolutionalNN, self).__init__()
-        # Convolutional layer 1
-        self.conv1 = nn.Conv2d(3, 32, kernel_size=3, stride=1, padding=1)
-        self.pool = nn.MaxPool2d(kernel_size=2, stride=2)
-        # Convolutional layer 2
-        self.conv2 = nn.Conv2d(32, 64, kernel_size=3, stride=1, padding=1)
-        # Convolutional layer 3 (new layer)
-        self.conv3 = nn.Conv2d(64, 128, kernel_size=3, stride=1, padding=1)
-
-        # Fully connected layers
-        self.fc1 = nn.Linear(128 * 28 * 28, 512)  # Adjust dimensions based on input size after conv layers
-        self.fc2 = nn.Linear(512, 256)  # New fully connected layer
-        self.fc3 = nn.Linear(256, num_classes)  # Output layer
-
-        # Dropout layers
-        self.dropout1 = nn.Dropout(p=1)  # 50% dropout after fc1
-        self.dropout2 = nn.Dropout(p=1)  # 50% dropout after fc2
-
-    def forward(self, x):
-        # Apply first convolutional layer + pooling + ReLU activation
-        x = self.pool(torch.relu(self.conv1(x)))
-        # Apply second convolutional layer + pooling + ReLU activation
-        x = self.pool(torch.relu(self.conv2(x)))
-        # Apply third convolutional layer + pooling + ReLU activation
-        x = self.pool(torch.relu(self.conv3(x)))
-        # Flatten the tensor
-        x = x.view(x.size(0), -1)
-        # Fully connected layer 1 + ReLU activation + dropout
-        x = torch.relu(self.fc1(x))
-        x = self.dropout1(x)
-        # Fully connected layer 2 + ReLU activation + dropout
-        x = torch.relu(self.fc2(x))
-        x = self.dropout2(x)
-        # Fully connected layer 3 (output layer)
-        x = self.fc3(x)
-        return x  # No need to apply softmax, CrossEntropyLoss handles it
 
 
+
+# Balance class weights
+def calculate_class_weights(train_loader, device):
+    # יצירת מונה לדירוגים
+    class_counts = {i: 0 for i in range(len(train_loader.dataset.classes))}
+    for _, labels in train_loader:
+        for label in labels.cpu().numpy():
+            class_counts[label] += 1
+
+    # חישוב המשקלות של כל קטגוריה
+    total_samples = sum(class_counts.values())
+    class_weights = [total_samples / class_counts[i] for i in range(len(class_counts))]
+
+    # המרת המשקלות למטריצה ב-torch ושליחתה ל-device
+    class_weights = torch.tensor(class_weights, dtype=torch.float).to(device)
+    return class_weights
+
+# Early stopping mechanism
+class EarlyStopping:
+    def __init__(self, patience=3, min_delta=0):
+        self.patience = patience
+        self.min_delta = min_delta
+        self.counter = 0
+        self.best_loss = None
+        self.early_stop = False
+
+    def __call__(self, val_loss):
+        if self.best_loss is None:
+            self.best_loss = val_loss
+        elif val_loss > self.best_loss + self.min_delta:
+            self.counter += 1
+            if self.counter >= self.patience:
+                self.early_stop = True
+        else:
+            self.best_loss = val_loss
+            self.counter = 0
+# Load the data
 def load_data(batch_size=32):
-    # Path to your dataset
     data_dir = "data/Banana Images-Real Dataset"
 
-    # Define image transformations
-    transform = transforms.Compose([
-        transforms.Resize((224, 224)),  # Resize images to 224x224
-        transforms.ToTensor(),  # Convert images to PyTorch tensors
-        transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])  # Normalize to [-1, 1]
+    # Define data augmentations
+    train_transform = transforms.Compose([
+        transforms.Resize((224, 224)),
+        transforms.RandomHorizontalFlip(),
+        transforms.RandomVerticalFlip(),
+        transforms.RandomRotation(20),
+        transforms.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.3),
+        transforms.RandomAffine(15),
+        transforms.ToTensor(),  # Make sure ToTensor is here
+        transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])
+    ])
+    val_test_transform = transforms.Compose([
+        transforms.Resize((224, 224)),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])
     ])
 
-    # Load train, validation, and test datasets
-    train_data = datasets.ImageFolder(root=f"{data_dir}/train", transform=transform)
-    val_data = datasets.ImageFolder(root=f"{data_dir}/validation", transform=transform)
-    test_data = datasets.ImageFolder(root=f"{data_dir}/test", transform=transform)
+    train_data = datasets.ImageFolder(root=f"{data_dir}/train", transform=train_transform)
+    val_data = datasets.ImageFolder(root=f"{data_dir}/validation", transform=val_test_transform)
+    test_data = datasets.ImageFolder(root=f"{data_dir}/test", transform=val_test_transform)
 
-    # Create DataLoaders
     train_loader = DataLoader(train_data, batch_size=batch_size, shuffle=True)
     val_loader = DataLoader(val_data, batch_size=batch_size, shuffle=False)
     test_loader = DataLoader(test_data, batch_size=batch_size, shuffle=False)
 
     return train_loader, val_loader, test_loader, len(train_data.classes)
 
+class ConvolutionalNN(nn.Module):
+    def __init__(self, num_classes):
+        super(ConvolutionalNN, self).__init__()
+        # Convolutional layer 1
+        self.conv1 = nn.Conv2d(3, 32, kernel_size=3, stride=1, padding=1)
+        self.bn1 = nn.BatchNorm2d(32)  # Batch Normalization
+        self.pool = nn.MaxPool2d(kernel_size=2, stride=2)
+        # Convolutional layer 2
+        self.conv2 = nn.Conv2d(32, 64, kernel_size=3, stride=1, padding=1)
+        self.bn2 = nn.BatchNorm2d(64)  # Batch Normalization
+        # Convolutional layer 3
+        self.conv3 = nn.Conv2d(64, 128, kernel_size=3, stride=1, padding=1)
+        self.bn3 = nn.BatchNorm2d(128)  # Batch Normalization
+        # Fully connected layers
+        self.fc1 = nn.Linear(128 * 28 * 28, 512)  # Adjust dimensions based on input size
+        self.dropout = nn.Dropout(0.5)  # Dropout
+        self.fc2 = nn.Linear(512, num_classes)
 
-def count_images_per_category(data_loader):
-    # Dictionary to hold count of images per category
-    label_counts = {i: 0 for i in range(len(data_loader.dataset.classes))}
+    def forward(self, x):
+        # Apply first convolutional layer + BatchNorm + pooling + ReLU activation
+        x = self.pool(torch.relu(self.bn1(self.conv1(x))))
+        # Apply second convolutional layer + BatchNorm + pooling + ReLU activation
+        x = self.pool(torch.relu(self.bn2(self.conv2(x))))
+        # Apply third convolutional layer + BatchNorm + pooling + ReLU activation
+        x = self.pool(torch.relu(self.bn3(self.conv3(x))))
+        # Flatten the tensor
+        x = x.view(x.size(0), -1)
+        # Fully connected layer 1 + Dropout + ReLU activation
+        x = self.dropout(torch.relu(self.fc1(x)))
+        # Fully connected layer 2 (output layer)
+        x = self.fc2(x)
+        return x
 
-    # Count images for each category
-    for images, labels in data_loader:
-        for label in labels.cpu().numpy():
-            label_counts[label] += 1
-
-    return label_counts
-
-
-def train(model, train_loader, val_loader, optimizer, criterion, epochs=10, device=torch.device("cpu")):
-    # Dictionary to store image counts per category for training data
-    label_counts = count_images_per_category(train_loader)
-
-    # Lists to store data for graphing
+# Modify the training function to include class weights and early stopping
+def train(model, train_loader, val_loader, optimizer, criterion, scheduler, epochs=10, device="cpu"):
     train_losses, val_losses = [], []
     train_accuracies, val_accuracies = [], []
+    early_stopping = EarlyStopping(patience=5)  # Set patience for early stopping
+    class_weights = calculate_class_weights(train_loader, device)
+    criterion = nn.CrossEntropyLoss(weight=class_weights)  # Use weighted loss
 
-    # Training loop
     for epoch in range(epochs):
         model.train()
-        total_loss = 0
-        correct_train, total_train = 0, 0
+        total_loss, correct_train, total_train = 0, 0, 0
         for images, labels in train_loader:
             images, labels = images.to(device), labels.to(device)
-            optimizer.zero_grad()  # Zero gradients
-            outputs = model(images)  # Forward pass
-            loss = criterion(outputs, labels)  # Compute loss
-            loss.backward()  # Backpropagation
-            optimizer.step()  # Update weights
+            optimizer.zero_grad()
+            outputs = model(images)
+            loss = criterion(outputs, labels)
+            loss.backward()
+            optimizer.step()
             total_loss += loss.item()
-
-            # Calculate accuracy for training set
             _, predicted = torch.max(outputs, 1)
-            total_train += labels.size(0)
             correct_train += (predicted == labels).sum().item()
+            total_train += labels.size(0)
 
-        # Calculate training loss and accuracy
         train_losses.append(total_loss / len(train_loader))
         train_accuracies.append(100 * correct_train / total_train)
 
-        print(f"Epoch [{epoch + 1}/{epochs}], Loss: {total_loss / len(train_loader):.4f}")
-
-        # Validate the model
         model.eval()
-        correct, total = 0, 0
-        val_loss = 0
+        correct_val, total_val, val_loss = 0, 0, 0
         with torch.no_grad():
             for images, labels in val_loader:
                 images, labels = images.to(device), labels.to(device)
                 outputs = model(images)
-                loss = criterion(outputs, labels)  # Compute validation loss
+                loss = criterion(outputs, labels)
                 val_loss += loss.item()
-
-                # Calculate accuracy for validation set
                 _, predicted = torch.max(outputs, 1)
-                total += labels.size(0)
-                correct += (predicted == labels).sum().item()
+                total_val += labels.size(0)
+                correct_val += (predicted == labels).sum().item()
 
         val_losses.append(val_loss / len(val_loader))
-        val_accuracies.append(100 * correct / total)
+        val_accuracies.append(100 * correct_val / total_val)
 
-        print(f"Validation Accuracy: {100 * correct / total:.2f}%")
+        # Adjust learning rate based on validation loss
+        scheduler.step(val_loss)
 
-    # Print the number of images for each category at the end of training
-    print("\nNumber of images for each category in the training set:")
-    for target_class, count in label_counts.items():
-        print(f"{label_to_name[target_class]}: {count} images")
+        print(f"Epoch [{epoch + 1}/{epochs}], Train Loss: {total_loss / len(train_loader):.4f}, "
+              f"Val Loss: {val_loss / len(val_loader):.4f}, Validation Accuracy: {100 * correct_val / total_val:.2f}%")
 
-    # Plot training/validation loss and accuracy
+        # Check for early stopping
+        early_stopping(val_loss)
+        if early_stopping.early_stop:
+            print(f"Early stopping at epoch {epoch + 1}")
+            break
+
     plot_metrics(train_losses, val_losses, train_accuracies, val_accuracies)
-
-
-def plot_metrics(train_losses, val_losses, train_accuracies, val_accuracies, test_accuracy=None):
-    epochs = range(1, len(train_losses) + 1)
-
-    plt.figure(figsize=(12, 6))
-
-    # Loss Plot
-    plt.subplot(1, 2, 1)
-    plt.plot(epochs, train_losses, label="Train Loss", color='blue')
-    plt.plot(epochs, val_losses, label="Validation Loss", color='red')
-    plt.xlabel('Epochs')
-    plt.ylabel('Loss')
-    plt.title('Loss during Training and Validation')
-    plt.legend()
-
-    # Accuracy Plot
-    plt.subplot(1, 2, 2)
-    plt.plot(epochs, train_accuracies, label="Train Accuracy", color='blue')
-    plt.plot(epochs, val_accuracies, label="Validation Accuracy", color='red')
-
-    if test_accuracy is not None:
-        plt.axhline(test_accuracy, color='green', linestyle='--', label="Test Accuracy")
-
-    plt.xlabel('Epochs')
-    plt.ylabel('Accuracy (%)')
-    plt.title('Accuracy during Training and Validation')
-    plt.legend()
-
-    plt.tight_layout()
-    plt.show()
-
-
-label_to_name = {
-    0: "A_raw",
-    1: "B_almost_ripe",
-    2: "C_ripe",
-    3: "D_banana_honey"
-}
-
-
-def test(model, test_loader, device=torch.device("cpu"), print_predict=False):
-    model.eval()
-    correct, total = 0, 0
-    all_predicted, all_labels = [], []
-
-    with torch.no_grad():
-        for images, labels in test_loader:
-            images, labels = images.to(device), labels.to(device)
-            outputs = model(images)
-            _, predicted = torch.max(outputs, 1)
-
-            # Store predictions and labels
-            all_predicted.extend(predicted.cpu().numpy())
-            all_labels.extend(labels.cpu().numpy())
-
-            total += labels.size(0)
-            correct += (predicted == labels).sum().item()
-
-    calculate_metrics(all_labels, all_predicted)
-    test_accuracy = 100 * correct / total
-
-    print(f"\nTest Accuracy: {test_accuracy:.2f}%")
-
-    if print_predict:
-        print("\nPrediction Results:")
-        for i in range(len(all_labels)):
-            pred_name = label_to_name[all_predicted[i]]
-            actual_name = label_to_name[all_labels[i]]
-            status = "Correct" if pred_name == actual_name else "Wrong"
-            print(f"Sample {i + 1}: Predicted = {pred_name}, Actual = {actual_name} -> {status}")
-
-    return test_accuracy
-
-
-def calculate_metrics(truth_labels, test_labels):
-    print("-----------------------------metrics-----------------------------")
-    accuracy = accuracy_score(truth_labels, test_labels)
-    print(f"\nTest Accuracy: {accuracy * 100:.3f}%")
-
-    precisions = precision_score(truth_labels, test_labels, average=None, zero_division=1)
-    for target_class, precision in enumerate(precisions):
-        print(f"Precision for {label_to_name[target_class]}: {precision * 100:.3f}%")
-
-    recall = recall_score(truth_labels, test_labels, average=None, zero_division=1)
-    for target_class, recall_value in enumerate(recall):
-        print(f"Recall for {label_to_name[target_class]}: {recall_value * 100:.3f}%")
-
-    f1_weighted = f1_score(truth_labels, test_labels, average='weighted', zero_division=1)
-    print(f"Weighted F1 Score: {f1_weighted * 100:.3f}%")
 
 
 # Main function
 def main():
-    batch_size = 32
-    epochs = 10
+    batch_size = 16
+    epochs = 50
 
     train_loader, val_loader, test_loader, num_classes = load_data(batch_size=batch_size)
     print(f"Number of classes: {num_classes}")
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = ConvolutionalNN(num_classes).to(device)
-    optimizer = optim.Adam(model.parameters(), lr=0.001)
+    optimizer = optim.AdamW(model.parameters(), lr=0.0001)
     criterion = nn.CrossEntropyLoss()
 
-    train(model, train_loader, val_loader, optimizer, criterion, epochs, device)
+    # Learning Rate Scheduler
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', patience=3)
+
+    train(model, train_loader, val_loader, optimizer, criterion, scheduler, epochs, device)
     test(model, test_loader, device)
+
+    # Save the model as a TorchScript file after training
+    scripted_model = torch.jit.script(model)
+    scripted_model.save("banana_classification_model_mobile10.pt")
+    print("model saved pt file for application")
 
 
 if __name__ == "__main__":
